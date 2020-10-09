@@ -29,6 +29,7 @@ module PgHaMigrations
   # Safe versus unsafe in this context specifically means the following:
   # - Safe operations will not block for long periods of time.
   # - Unsafe operations _may_ block for long periods of time.
+  # TODO inherit from StandardError
   UnsafeMigrationError = Class.new(Exception)
 
   # Invalid migrations are operations which we expect to not function

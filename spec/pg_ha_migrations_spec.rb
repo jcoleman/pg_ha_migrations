@@ -104,14 +104,12 @@ RSpec.describe PgHaMigrations do
             PgHaMigrations::SafeStatements,
             migration_klass,
           ].each_with_object({}) do |klass, hash|
-            hash[klass] = klass.instance_methods
+            hash[klass] = klass.instance_methods(include_super=false)
           end
 
           PgHaMigrations::UnsafeStatements.class_eval do
-            delegate_unsafe_method_to_migration_base_class(:pg_ha_migrations_test_method)
-            def pg_ha_migrations_test_method
-              raise "unexpected execution of unsafe method"
-            end
+            delegate_unsafe_method_to_migration_base_class :pg_ha_migrations_test_method
+            disable_or_delegate_default_method :pg_ha_migrations_test_method, ":pg_ha_migrations_test_method is NOT SAFE!"
           end
 
           begin
@@ -124,7 +122,7 @@ RSpec.describe PgHaMigrations do
           # Make sure we clean up after ourselves since these tests have to
           # do some dirty poisoning of the classes and modules under test.
           @instance_methods_by_class.each do |klass, methods|
-            expect(klass.instance_methods).to match_array(methods)
+            expect(klass.instance_methods(include_super=false)).to match_array(methods)
           end
         end
 
@@ -156,6 +154,60 @@ RSpec.describe PgHaMigrations do
           expect(ActiveRecord::Base.connection).to receive(:pg_ha_migrations_test_method).and_return("sentinel_value")
           expect(subclass.new.unsafe_pg_ha_migrations_test_method).to eq("sentinel_value")
         end
+
+        it "executes a default named method overridden implementation in UnsafeStatements when disable_default_migration_methods=false" do
+          allow(PgHaMigrations.config).to receive(:disable_default_migration_methods).and_return(false)
+
+          # We intentionally avoid using any RSpec mocking here because
+          # we need to to be absolutely certain that we've defined this
+          # method _directly_ on the class we inherit from.
+          PgHaMigrations::UnsafeStatements.class_eval do
+            def unsafe_pg_ha_migrations_test_method
+              "sentinel_value"
+            end
+          end
+
+          # test both ways for config values
+          expect(subclass.new.pg_ha_migrations_test_method).to eq("sentinel_value")
+          expect(subclass.new.unsafe_pg_ha_migrations_test_method).to eq("sentinel_value")
+        end
+
+        it "doesn't define any methods on UnsafeStatements that result in different implementations being called when disable_default_migration_methods=false" do
+          allow(PgHaMigrations.config).to receive(:disable_default_migration_methods).and_return(false)
+          allow_any_instance_of(PgHaMigrations::UnsafeStatements).to receive(:execute_ancestor_statement) { raise "sentinel" }
+
+          unsafe_instance_methods = PgHaMigrations::UnsafeStatements
+            .instance_methods(include_super=false)
+            .select { |method_name| method_name.to_s =~ /\Aunsafe_/ }
+
+          aggregate_failures do
+            instance = subclass.new
+            unsafe_instance_methods.each do |method_name|
+              error_executing_with_unsafe_prefix = begin
+                instance.send(method_name)
+              rescue Exception => e
+                e
+              end
+              error_executing_without_prefix = begin
+                original_method_name = method_name.to_s.match(/\Aunsafe_(.+)/)[1]
+                instance.send(original_method_name)
+              rescue Exception => e
+                e
+              end
+
+              expect(method_name).to satisfy("should have the same behavior with/without the unsafe_* prefix") { |e|
+                error_executing_with_unsafe_prefix.class == error_executing_without_prefix.class &&
+                  error_executing_with_unsafe_prefix.message == error_executing_without_prefix.message
+              }
+            end
+          end
+        end
+
+        it "doesn't have any unsafe_* overrides in SafeStatements that also exist in UnsafeStatements" do
+          # ?
+        end
+
+        # TODO: block output in the new tests
       end
     end
   end

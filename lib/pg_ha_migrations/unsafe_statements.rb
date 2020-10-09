@@ -1,4 +1,7 @@
 module PgHaMigrations::UnsafeStatements
+  # TODO: add comments describing how you should override a method's unsafe
+  # implementation versus adding an entirely new unsafe/safe implementation.
+
   def self.disable_or_delegate_default_method(method_name, error_message, allow_reentry_from_compatibility_module: false)
     define_method(method_name) do |*args, &block|
       if PgHaMigrations.config.check_for_dependent_objects
@@ -12,12 +15,13 @@ module PgHaMigrations::UnsafeStatements
         # implementations in `ActiveRecord::Migration::Compatibility` so
         # we have to explicitly handle that case by allowing execution of
         # the original implementation by its original name.
-        unless  allow_reentry_from_compatibility_module && caller[0] =~ /lib\/active_record\/migration\/compatibility.rb/
+        unless allow_reentry_from_compatibility_module && caller[0] =~ /lib\/active_record\/migration\/compatibility.rb/
           raise PgHaMigrations::UnsafeMigrationError, error_message
         end
       end
 
-      execute_ancestor_statement(method_name, *args, &block)
+      send("unsafe_#{method_name}", *args, &block)
+      #execute_ancestor_statement(method_name, *args, &block)
     end
   end
 
@@ -37,6 +41,7 @@ module PgHaMigrations::UnsafeStatements
   delegate_unsafe_method_to_migration_base_class :rename_table
   delegate_unsafe_method_to_migration_base_class :rename_column
   delegate_unsafe_method_to_migration_base_class :change_column
+  delegate_unsafe_method_to_migration_base_class :change_column_null
   delegate_unsafe_method_to_migration_base_class :change_column_default
   delegate_unsafe_method_to_migration_base_class :remove_column
   delegate_unsafe_method_to_migration_base_class :add_index
@@ -70,6 +75,9 @@ module PgHaMigrations::UnsafeStatements
   end
 
   def execute_ancestor_statement(method_name, *args, &block)
+    # TODO unsafe_ reimplementations here need to be called by this if
+    # we're allowing the original method names.
+    #
     # Dispatching here is a bit complicated: we need to execute the method
     # belonging to the first member of the inheritance chain (besides
     # UnsafeStatements). If don't find the method in the inheritance chain,
